@@ -38,7 +38,7 @@ func init() {
 	loadMongoCmd.Flags().Int64P("start-block", "s", -1, "Start block for blockchain firehose")
 	loadMongoCmd.Flags().Uint64P("stop-block", "t", 0, "Stop block for blockchain firehose")
 
-	loadMongoCmd.Flags().StringP("substreams-endpoint", "e", "bsc-dev.streamingfast.io:443", "firehose GRPC endpoint")
+	loadMongoCmd.Flags().StringP("endpoint", "e", "bsc-dev.streamingfast.io:443", "firehose GRPC endpoint")
 	loadMongoCmd.Flags().String("substreams-api-key-envvar", "FIREHOSE_API_TOKEN", "name of variable containing firehose authentication token (JWT)")
 	loadMongoCmd.Flags().BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
 	loadMongoCmd.Flags().BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
