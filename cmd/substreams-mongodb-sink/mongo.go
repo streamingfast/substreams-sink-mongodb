@@ -80,7 +80,7 @@ func runLoadMongo(cmd *cobra.Command, args []string) error {
 	}
 
 	ssClient, callOpts, err := client.NewSubstreamsClient(
-		mustGetString(cmd, "firehose-endpoint"),
+		mustGetString(cmd, "endpoint"),
 		os.Getenv(mustGetString(cmd, "substreams-api-key-envvar")),
 		mustGetBool(cmd, "insecure"),
 		mustGetBool(cmd, "plaintext"),

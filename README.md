@@ -25,12 +25,16 @@ Here is an example of a schema:
 > Note: any other field which is of type string isn't necessary to be declared 
 
 ### Running mongodb cli loader
-1. Deploy a mongodb (docker, Robo 3T or any kind of tool). If deployed with docker, make sure the port is exposed.
+1. Deploy mongodb with docker (you can also use any other tool or method to deploy a local mongodb)
+```bash
+docker run --rm -d --publish 27017:27017 mongo
+```
 
 2. Run the below command:
 ```bash
 # local deployment of firehose
 substreams-mongodb-sink load ./substreams.yaml db_out --endpoint localhost:9000 -p -s 6810706 -t 6810806 
 # run remotely against bsc
-substreams-mongodb-sink load ./substreams.yaml db_out --endpoint bsc-dev.streamingfast.io -s 6810706 -t 6810806 
+sftoken # https://substreams.streamingfast.io/reference-and-specs/authentication
+substreams-mongodb-sink load ./substreams.yaml db_out --endpoint bsc-dev.streamingfast.io -k -s 6810706 -t 6810806
 ```
