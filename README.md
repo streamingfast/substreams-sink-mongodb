@@ -1,0 +1,1 @@
+# substreams-mongodb-sink
