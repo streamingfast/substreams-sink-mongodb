@@ -1,4 +1,4 @@
-module github.com/streamingfast/substreams-mongodb-sinks
+module github.com/streamingfast/substreams-mongodb-sink
 
 go 1.18
 

@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/streamingfast/bstream"
 	_ "github.com/streamingfast/sf-ethereum/types"
-	database "github.com/streamingfast/substreams-mongodb-sinks/db"
+	database "github.com/streamingfast/substreams-mongodb-sink/db"
 	"github.com/streamingfast/substreams/client"
 	"github.com/streamingfast/substreams/manifest"
 	pbsubstreams "github.com/streamingfast/substreams/pb/sf/substreams/v1"
