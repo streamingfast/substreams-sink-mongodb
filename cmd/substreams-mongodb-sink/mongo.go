@@ -10,16 +10,15 @@ import (
 	"strconv"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
-
 	"github.com/spf13/cobra"
 	"github.com/streamingfast/bstream"
 	_ "github.com/streamingfast/sf-ethereum/types"
-	database "github.com/streamingfast/substreams-mongodb-sink/db"
+	"github.com/streamingfast/substreams-mongodb-sink/pb/substreams/databases/deltas/v1"
 	"github.com/streamingfast/substreams/client"
 	"github.com/streamingfast/substreams/manifest"
 	pbsubstreams "github.com/streamingfast/substreams/pb/sf/substreams/v1"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/protobuf/proto"
@@ -134,7 +133,7 @@ func runLoadMongo(cmd *cobra.Command, args []string) error {
 				}
 				if output.Name == "db_out" {
 					// fixme: create agnostic database change model
-					databaseChanges := &database.DatabaseChanges{}
+					databaseChanges := &deltas.DatabaseChanges{}
 					err := proto.Unmarshal(output.GetMapOutput().GetValue(), databaseChanges)
 					if err != nil {
 						return fmt.Errorf("unmarshalling database changes: %w", err)
@@ -205,12 +204,12 @@ func (db *MongoDB) delete(databaseName string, collectionName string, id string)
 	return nil
 }
 
-func applyDatabaseChanges(db *MongoDB, databaseChanges *database.DatabaseChanges, databaseName string, ddl tables) (err error) {
+func applyDatabaseChanges(db *MongoDB, databaseChanges *deltas.DatabaseChanges, databaseName string, ddl tables) (err error) {
 	for _, change := range databaseChanges.TableChanges {
 		id := change.Pk
 		switch change.Operation {
-		case database.TableChange_UNSET:
-		case database.TableChange_CREATE:
+		case deltas.TableChange_UNSET:
+		case deltas.TableChange_CREATE:
 			entity := map[string]interface{}{}
 			for _, field := range change.Fields {
 				var newValue interface{} = field.NewValue
@@ -261,7 +260,7 @@ func applyDatabaseChanges(db *MongoDB, databaseChanges *database.DatabaseChanges
 				return fmt.Errorf("saving entity %s with id %s: %w", change.Table, id, err)
 			}
 			fmt.Printf("saved entity %s with id %s:\n", change.Table, id)
-		case database.TableChange_UPDATE:
+		case deltas.TableChange_UPDATE:
 			entityChanges := map[string]interface{}{}
 			for _, field := range change.Fields {
 				//todo: convert value to the right type base on the graphql definition
@@ -272,7 +271,7 @@ func applyDatabaseChanges(db *MongoDB, databaseChanges *database.DatabaseChanges
 				return fmt.Errorf("updating entity %s with id %s: %w", change.Table, id, err)
 			}
 			fmt.Printf("updating entity %s with id %s\n", change.Table, id)
-		case database.TableChange_DELETE:
+		case deltas.TableChange_DELETE:
 			for range change.Fields {
 				err := db.delete(databaseName, change.Table, change.Pk)
 				if err != nil {

@@ -10,6 +10,7 @@ require (
 	github.com/streamingfast/logging v0.0.0-20220511154537-ce373d264338
 	github.com/streamingfast/sf-ethereum/types v0.0.0-20220614134112-6432ec956bcd
 	github.com/streamingfast/substreams v0.0.14-0.20220620134300-2996ca03375d
+	github.com/streamingfast/substreams-databases master
 	github.com/stretchr/testify v1.7.1
 	go.mongodb.org/mongo-driver v1.9.1
 	go.uber.org/zap v1.21.0
