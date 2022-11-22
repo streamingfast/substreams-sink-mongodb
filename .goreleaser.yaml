@@ -2,7 +2,7 @@ env_files:
   github_token: ~/.config/goreleaser/github_token
 
 builds:
-  - id: substreams-mongodb-sink
+  - id: substreams-sink-mongodb
   goos:
     - linux
     - darwin
@@ -11,15 +11,15 @@ builds:
     - darwin_amd64
     - darwin_arm64
   ldflags: -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
-  main: ./cmd/substreams-mongodb-sink
+  main: ./cmd/substreams-sink-mongodb
   env:
     - CGO_ENABLED=0
 
 archives:
-  - id: substreams-mongodb-sink
+  - id: substreams-sink-mongodb
     name_template: '{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
     builds:
-    - substreams-mongodb-sink
+    - substreams-sink-mongodb
     replacements:
       amd64: x86_64
       darwin: macOS
@@ -52,15 +52,15 @@ signs:
   artifacts: checksum
 
 brews:
-  - name: substreams-mongodb-sink
+  - name: substreams-sink-mongodb
     ids:
-      - substreams-mongodb-sink
+      - substreams-sink-mongodb
     tap:
       owner: streamingfast
       name: homebrew-tap
     commit_author:
       name: goreleaserbot
       email: goreleaser@streamingfast.io
-    homepage: "https://github.com/streamingfast/substreams-mongodb-sink"
+    homepage: "https://github.com/streamingfast/substreams-sink-mongodb"
     description: "StreamingFast mongodb load CLI"
     license: "Apache-2.0"
