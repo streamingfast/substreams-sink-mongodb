@@ -1,0 +1,263 @@
+package sinker
+
+import (
+	"context"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/streamingfast/bstream"
+	"github.com/streamingfast/logging"
+	"github.com/streamingfast/shutter"
+	sink "github.com/streamingfast/substreams-sink"
+	"github.com/streamingfast/substreams-sink-mongodb/mongo"
+	pbdatabase "github.com/streamingfast/substreams-sink-mongodb/pb/database/v1"
+	"github.com/streamingfast/substreams/client"
+	"github.com/streamingfast/substreams/manifest"
+	pbsubstreams "github.com/streamingfast/substreams/pb/sf/substreams/v1"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
+)
+
+const BLOCK_PROGRESS = 1000
+
+type MongoSinker struct {
+	*shutter.Shutter
+
+	DBLoader *mongo.Loader
+	Tables   mongo.Tables
+
+	Pkg              *pbsubstreams.Package
+	OutputModule     *pbsubstreams.Module
+	OutputModuleName string
+	OutputModuleHash manifest.ModuleHash
+	ClientConfig     *client.SubstreamsClientConfig
+
+	sink       *sink.Sinker
+	lastCursor *sink.Cursor
+
+	blockRange *bstream.Range
+
+	logger *zap.Logger
+	tracer logging.Tracer
+}
+
+type Config struct {
+	DBLoader *mongo.Loader
+	DBName   string
+
+	DDL mongo.Tables
+
+	BlockRange       string
+	Pkg              *pbsubstreams.Package
+	OutputModule     *pbsubstreams.Module
+	OutputModuleName string
+	OutputModuleHash manifest.ModuleHash
+	ClientConfig     *client.SubstreamsClientConfig
+}
+
+func New(ctx context.Context, config *Config, logger *zap.Logger, tracer logging.Tracer) (*MongoSinker, error) {
+	s := &MongoSinker{
+		Shutter: shutter.New(),
+		logger:  logger,
+		tracer:  tracer,
+
+		Tables: config.DDL,
+
+		DBLoader:         config.DBLoader,
+		Pkg:              config.Pkg,
+		OutputModule:     config.OutputModule,
+		OutputModuleName: config.OutputModuleName,
+		OutputModuleHash: config.OutputModuleHash,
+		ClientConfig:     config.ClientConfig,
+	}
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(300 * time.Second):
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err := config.DBLoader.Ping(ctx)
+				if err != nil {
+					s.logger.Error("failed to ping database", zap.Error(err))
+					s.Shutdown(fmt.Errorf("failed to ping database: %w", err))
+				}
+				cancel()
+			}
+		}
+	}()
+
+	var err error
+	s.blockRange, err = resolveBlockRange(config.BlockRange, config.OutputModule)
+	if err != nil {
+		return nil, fmt.Errorf("resolve block range: %w", err)
+	}
+
+	return s, nil
+}
+
+func (s *MongoSinker) Start(ctx context.Context) error {
+	return s.Run(ctx)
+}
+
+func (s *MongoSinker) Run(ctx context.Context) error {
+	cursor, err := s.DBLoader.GetCursor(ctx, hex.EncodeToString(s.OutputModuleHash))
+	if err != nil && !errors.Is(err, mongo.ErrCursorNotFound) {
+		return fmt.Errorf("unable to get cursor: %w", err)
+	}
+
+	if errors.Is(err, mongo.ErrCursorNotFound) {
+		cursorStartBlock := s.OutputModule.InitialBlock
+		if s.blockRange.StartBlock() > 0 {
+			cursorStartBlock = s.blockRange.StartBlock() - 1
+		}
+
+		cursor = sink.NewCursor("", bstream.NewBlockRef("", cursorStartBlock))
+
+		if err = s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), cursor); err != nil {
+			return fmt.Errorf("failed to create initial cursor: %w", err)
+		}
+	}
+
+	s.sink, err = sink.New(
+		sink.SubstreamsModeProduction,
+		s.Pkg.Modules,
+		s.OutputModule,
+		s.OutputModuleHash,
+		s.handleBlockScopeData,
+		s.ClientConfig,
+		s.logger,
+		s.tracer,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to create sink: %w", err)
+	}
+
+	s.sink.OnTerminating(s.Shutdown)
+	s.OnTerminating(func(err error) {
+		ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
+		defer cancel()
+		if err == nil {
+			_ = s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), s.lastCursor)
+		}
+
+		s.logger.Info("terminating sink")
+		s.sink.Shutdown(err)
+	})
+
+	if err := s.sink.Start(ctx, s.blockRange, cursor); err != nil {
+		return fmt.Errorf("sink failed: %w", err)
+	}
+
+	return nil
+}
+
+func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, databaseChanges *pbdatabase.DatabaseChanges) (err error) {
+	for _, change := range databaseChanges.TableChanges {
+		id := change.Pk
+		switch change.Operation {
+		case pbdatabase.TableChange_UNSET:
+		case pbdatabase.TableChange_CREATE:
+			entity := map[string]interface{}{}
+			for _, field := range change.Fields {
+				var newValue interface{} = field.NewValue
+				if fs, found := s.Tables[change.Table]; found {
+					if f, found := fs[field.Name]; found {
+						switch f {
+						case mongo.INTEGER:
+							newValue, err = strconv.ParseInt(field.NewValue, 10, 64)
+							if err != nil {
+								return
+							}
+						case mongo.DOUBLE:
+							newValue, err = strconv.ParseFloat(field.NewValue, 64)
+							if err != nil {
+								return
+							}
+						case mongo.BOOLEAN:
+							newValue, err = strconv.ParseBool(field.NewValue)
+							if err != nil {
+								return
+							}
+						case mongo.TIMESTAMP:
+							var tempValue int64
+							tempValue, err = strconv.ParseInt(field.NewValue, 10, 64)
+							if err != nil {
+								return
+							}
+							newValue = primitive.Timestamp{T: uint32(tempValue)}
+						case mongo.NULL:
+							if field.NewValue != "" {
+								return
+							}
+							newValue = nil
+						case mongo.DATE:
+							var tempValue time.Time
+							tempValue, err = time.Parse(time.RFC3339, field.NewValue)
+							newValue = tempValue
+						default:
+							// string
+						}
+					}
+				}
+				entity[field.Name] = newValue
+			}
+			err := s.DBLoader.Save(ctx, change.Table, id, entity)
+			if err != nil {
+				return fmt.Errorf("saving entity %s with id %s: %w", change.Table, id, err)
+			}
+		case pbdatabase.TableChange_UPDATE:
+			entityChanges := map[string]interface{}{}
+			for _, field := range change.Fields {
+				entityChanges[field.Name] = field.NewValue
+			}
+			err := s.DBLoader.Update(ctx, change.Table, change.Pk, entityChanges)
+			if err != nil {
+				return fmt.Errorf("updating entity %s with id %s: %w", change.Table, id, err)
+			}
+		case pbdatabase.TableChange_DELETE:
+			for range change.Fields {
+				err := s.DBLoader.Delete(ctx, change.Table, change.Pk)
+				if err != nil {
+					return fmt.Errorf("deleting entity %s with id %s: %w", change.Table, id, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *MongoSinker) handleBlockScopeData(ctx context.Context, cursor *sink.Cursor, data *pbsubstreams.BlockScopedData) error {
+	for _, output := range data.Outputs {
+		if output.Name != s.OutputModuleName {
+			continue
+		}
+
+		dbChanges := &pbdatabase.DatabaseChanges{}
+		err := proto.Unmarshal(output.GetMapOutput().GetValue(), dbChanges)
+		if err != nil {
+			return fmt.Errorf("unmarshal database changes: %w", err)
+		}
+
+		err = s.applyDatabaseChanges(ctx, dbChanges)
+		if err != nil {
+			return fmt.Errorf("apply database changes: %w", err)
+		}
+	}
+
+	s.lastCursor = cursor
+
+	if cursor.Block.Num()%BLOCK_PROGRESS == 0 {
+		if err := s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), s.lastCursor); err != nil {
+			return fmt.Errorf("failed to roll: %w", err)
+		}
+	}
+
+	return nil
+}
