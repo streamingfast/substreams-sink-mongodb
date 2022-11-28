@@ -35,7 +35,8 @@ type MongoSinker struct {
 	OutputModuleHash manifest.ModuleHash
 	ClientConfig     *client.SubstreamsClientConfig
 
-	sink *sink.Sinker
+	sink       *sink.Sinker
+	lastCursor *sink.Cursor
 
 	blockRange *bstream.Range
 
@@ -73,6 +74,12 @@ func New(ctx context.Context, config *Config, logger *zap.Logger, tracer logging
 		ClientConfig:     config.ClientConfig,
 	}
 
+	s.OnTerminating(func(err error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s.Close(ctx, err)
+	})
+
 	go func() {
 		for {
 			select {
@@ -97,6 +104,14 @@ func New(ctx context.Context, config *Config, logger *zap.Logger, tracer logging
 	}
 
 	return s, nil
+}
+
+func (s *MongoSinker) Close(ctx context.Context, err error) {
+	if s.lastCursor == nil || err != nil {
+		return
+	}
+
+	_ = s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), s.lastCursor)
 }
 
 func (s *MongoSinker) Start(ctx context.Context) error {
@@ -242,6 +257,8 @@ func (s *MongoSinker) handleBlockScopeData(ctx context.Context, cursor *sink.Cur
 			return fmt.Errorf("apply database changes: %w", err)
 		}
 	}
+
+	s.lastCursor = cursor
 
 	if cursor.Block.Num()%BLOCK_PROGRESS == 0 {
 		if err := s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), cursor); err != nil {
