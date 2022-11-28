@@ -122,11 +122,12 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 		),
 	}
 
-	mongoSinker, err := sinker.New(ctx, config, zlog, tracer)
+	mongoSinker, err := sinker.New(config, zlog, tracer)
 	if err != nil {
 		return fmt.Errorf("unable to create sinker: %w", err)
 	}
 	mongoSinker.OnTerminating(app.Shutdown)
+
 	app.OnTerminating(func(err error) {
 		zlog.Info("application terminating, shutting down sinker", zap.Error(err))
 		mongoSinker.Shutdown(err)

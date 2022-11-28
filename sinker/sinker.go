@@ -58,7 +58,7 @@ type Config struct {
 	ClientConfig     *client.SubstreamsClientConfig
 }
 
-func New(ctx context.Context, config *Config, logger *zap.Logger, tracer logging.Tracer) (*MongoSinker, error) {
+func New(config *Config, logger *zap.Logger, tracer logging.Tracer) (*MongoSinker, error) {
 	s := &MongoSinker{
 		Shutter: shutter.New(),
 		logger:  logger,
@@ -77,25 +77,8 @@ func New(ctx context.Context, config *Config, logger *zap.Logger, tracer logging
 	s.OnTerminating(func(err error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		s.Close(ctx, err)
+		s.Stop(ctx, err)
 	})
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(300 * time.Second):
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				err := config.DBLoader.Ping(ctx)
-				if err != nil {
-					s.logger.Error("failed to ping database", zap.Error(err))
-					s.Shutdown(fmt.Errorf("failed to ping database: %w", err))
-				}
-				cancel()
-			}
-		}
-	}()
 
 	var err error
 	s.blockRange, err = resolveBlockRange(config.BlockRange, config.OutputModule)
@@ -106,7 +89,7 @@ func New(ctx context.Context, config *Config, logger *zap.Logger, tracer logging
 	return s, nil
 }
 
-func (s *MongoSinker) Close(ctx context.Context, err error) {
+func (s *MongoSinker) Stop(ctx context.Context, err error) {
 	if s.lastCursor == nil || err != nil {
 		return
 	}
