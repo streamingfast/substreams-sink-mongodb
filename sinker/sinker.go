@@ -35,8 +35,7 @@ type MongoSinker struct {
 	OutputModuleHash manifest.ModuleHash
 	ClientConfig     *client.SubstreamsClientConfig
 
-	sink       *sink.Sinker
-	lastCursor *sink.Cursor
+	sink *sink.Sinker
 
 	blockRange *bstream.Range
 
@@ -139,12 +138,6 @@ func (s *MongoSinker) Run(ctx context.Context) error {
 
 	s.sink.OnTerminating(s.Shutdown)
 	s.OnTerminating(func(err error) {
-		ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
-		defer cancel()
-		if err == nil {
-			_ = s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), s.lastCursor)
-		}
-
 		s.logger.Info("terminating sink")
 		s.sink.Shutdown(err)
 	})
@@ -250,10 +243,8 @@ func (s *MongoSinker) handleBlockScopeData(ctx context.Context, cursor *sink.Cur
 		}
 	}
 
-	s.lastCursor = cursor
-
 	if cursor.Block.Num()%BLOCK_PROGRESS == 0 {
-		if err := s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), s.lastCursor); err != nil {
+		if err := s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), cursor); err != nil {
 			return fmt.Errorf("failed to roll: %w", err)
 		}
 	}
