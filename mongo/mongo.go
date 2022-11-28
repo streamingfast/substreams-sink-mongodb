@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.uber.org/zap"
@@ -61,10 +62,10 @@ func (l *Loader) Save(ctx context.Context, collectionName string, id string, ent
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	entity["id"] = id
-
 	collection := l.database.Collection(collectionName)
-	_, err := collection.InsertOne(ctx, entity)
+	update := bson.M{"$set": entity}
+
+	_, err := collection.UpdateByID(ctx, id, update, options.Update().SetUpsert(true))
 	if err != nil {
 		return err
 	}
@@ -76,12 +77,17 @@ func (l *Loader) Update(ctx context.Context, collectionName string, id string, c
 	defer cancel()
 
 	collection := l.database.Collection(collectionName)
-	filter := bson.M{"id": id}
 	update := bson.M{"$set": changes}
-	_, err := collection.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+
+	res, err := collection.UpdateByID(ctx, id, update, options.Update().SetUpsert(false))
 	if err != nil {
 		return err
 	}
+
+	if res.ModifiedCount == 0 {
+		return errors.New("no document updated")
+	}
+
 	return nil
 }
 
