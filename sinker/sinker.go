@@ -17,7 +17,6 @@ import (
 	"github.com/streamingfast/substreams/client"
 	"github.com/streamingfast/substreams/manifest"
 	pbsubstreams "github.com/streamingfast/substreams/pb/sf/substreams/v1"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -190,7 +189,7 @@ func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, databaseChanges 
 							if err != nil {
 								return
 							}
-							newValue = primitive.Timestamp{T: uint32(tempValue)}
+							newValue = time.Unix(tempValue, 0)
 						case mongo.NULL:
 							if field.NewValue != "" {
 								return
