@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/streamingfast/bstream"
 	sink "github.com/streamingfast/substreams-sink"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -42,7 +41,7 @@ func (l *Loader) GetCursor(ctx context.Context, outputModuleHash string) (*sink.
 		return nil, fmt.Errorf("decoding cursor %q:  %w", outputModuleHash, err)
 	}
 
-	return sink.NewCursor(c.Cursor, bstream.NewBlockRef(c.BlockID, c.BlockNum)), nil
+	return sink.NewBlankCursor(), nil
 }
 
 func (l *Loader) WriteCursor(ctx context.Context, moduleHash string, c *sink.Cursor) error {
