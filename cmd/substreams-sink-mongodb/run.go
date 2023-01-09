@@ -27,6 +27,7 @@ var SinkRunCmd = Command(sinkRunE,
 	Flags(func(flags *pflag.FlagSet) {
 		flags.BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
 		flags.BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
+		flags.Int("undo-buffer-size", 0, "Number of blocks to keep buffered to handle fork reorganizations")
 	}),
 	AfterAllHook(func(_ *cobra.Command) {
 		sinker.RegisterMetrics()
@@ -114,6 +115,7 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 		OutputModule:     module,
 		OutputModuleName: outputModuleName,
 		OutputModuleHash: outputModuleHash,
+		UndoBufferSize:   viper.GetInt("run-undo-buffer-size"),
 		ClientConfig: client.NewSubstreamsClientConfig(
 			endpoint,
 			apiToken,

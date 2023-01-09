@@ -35,6 +35,8 @@ type MongoSinker struct {
 	OutputModuleHash manifest.ModuleHash
 	ClientConfig     *client.SubstreamsClientConfig
 
+	UndoBufferSize int
+
 	sink       *sink.Sinker
 	lastCursor *sink.Cursor
 
@@ -49,6 +51,8 @@ type Config struct {
 	DBName   string
 
 	DDL mongo.Tables
+
+	UndoBufferSize int
 
 	BlockRange       string
 	Pkg              *pbsubstreams.Package
@@ -72,6 +76,8 @@ func New(config *Config, logger *zap.Logger, tracer logging.Tracer) (*MongoSinke
 		OutputModuleName: config.OutputModuleName,
 		OutputModuleHash: config.OutputModuleHash,
 		ClientConfig:     config.ClientConfig,
+
+		UndoBufferSize: config.UndoBufferSize,
 	}
 
 	s.OnTerminating(func(err error) {
@@ -120,6 +126,11 @@ func (s *MongoSinker) Run(ctx context.Context) error {
 		}
 	}
 
+	var sinkOptions []sink.Option
+	if s.UndoBufferSize > 0 {
+		sinkOptions = append(sinkOptions, sink.WithBlockDataBuffer(s.UndoBufferSize))
+	}
+
 	s.sink, err = sink.New(
 		sink.SubstreamsModeDevelopment, // fixme: change back to production mode
 		s.Pkg.Modules,
@@ -134,6 +145,7 @@ func (s *MongoSinker) Run(ctx context.Context) error {
 		},
 		s.logger,
 		s.tracer,
+		sinkOptions...,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to create sink: %w", err)
