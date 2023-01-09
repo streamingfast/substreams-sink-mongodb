@@ -152,7 +152,7 @@ func (s *MongoSinker) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, databaseChanges *pbdatabase.DatabaseChanges) (err error) {
+func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, blockId string, blockNum uint64, databaseChanges *pbdatabase.DatabaseChanges) (err error) {
 	for _, change := range databaseChanges.TableChanges {
 		id := change.Pk
 		switch change.Operation {
@@ -204,7 +204,7 @@ func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, databaseChanges 
 			}
 			err := s.DBLoader.Save(ctx, change.Table, id, entity)
 			if err != nil {
-				return fmt.Errorf("saving entity %s with id %s: %w", change.Table, id, err)
+				return fmt.Errorf("saving entity %s with id %s: %w (block num: %d id %s)", change.Table, id, err, blockNum, blockId)
 			}
 		case pbdatabase.TableChange_UPDATE:
 			entityChanges := map[string]interface{}{}
@@ -213,13 +213,13 @@ func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, databaseChanges 
 			}
 			err := s.DBLoader.Update(ctx, change.Table, change.Pk, entityChanges)
 			if err != nil {
-				return fmt.Errorf("updating entity %s with id %s: %w", change.Table, id, err)
+				return fmt.Errorf("updating entity %s with id %s: %w (block num: %d id %s)", change.Table, id, err, blockNum, blockId)
 			}
 		case pbdatabase.TableChange_DELETE:
 			for range change.Fields {
 				err := s.DBLoader.Delete(ctx, change.Table, change.Pk)
 				if err != nil {
-					return fmt.Errorf("deleting entity %s with id %s: %w", change.Table, id, err)
+					return fmt.Errorf("deleting entity %s with id %s: %w (block num: %d id %s)", change.Table, id, err, blockNum, blockId)
 				}
 			}
 		}
@@ -240,7 +240,7 @@ func (s *MongoSinker) handleBlockScopeData(ctx context.Context, cursor *sink.Cur
 			return fmt.Errorf("unmarshal database changes: %w", err)
 		}
 
-		err = s.applyDatabaseChanges(ctx, dbChanges)
+		err = s.applyDatabaseChanges(ctx, data.Clock.Id, data.Clock.Number, dbChanges)
 		if err != nil {
 			return fmt.Errorf("apply database changes: %w", err)
 		}

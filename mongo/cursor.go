@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/streamingfast/bstream"
+
 	sink "github.com/streamingfast/substreams-sink"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var ErrCursorNotFound = errors.New("cursor not found")
@@ -41,7 +44,10 @@ func (l *Loader) GetCursor(ctx context.Context, outputModuleHash string) (*sink.
 		return nil, fmt.Errorf("decoding cursor %q:  %w", outputModuleHash, err)
 	}
 
-	return sink.NewBlankCursor(), nil
+	return &sink.Cursor{
+		Cursor: c.Cursor,
+		Block:  bstream.NewBlockRef(c.BlockID, c.BlockNum),
+	}, nil
 }
 
 func (l *Loader) WriteCursor(ctx context.Context, moduleHash string, c *sink.Cursor) error {
@@ -51,12 +57,12 @@ func (l *Loader) WriteCursor(ctx context.Context, moduleHash string, c *sink.Cur
 	filter := bson.M{"id": moduleHash}
 	update := bson.M{"$set": cursorDocument{Id: moduleHash, Cursor: c.Cursor, BlockNum: c.Block.Num(), BlockID: c.Block.ID()}}
 
-	res, err := l.database.Collection("_cursors").UpdateOne(ctx, filter, update)
+	res, err := l.database.Collection("_cursors").UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
 	if err != nil {
 		return fmt.Errorf("updating cursor %q:  %w", moduleHash, err)
 	}
 
-	if res.UpsertedCount > 0 || res.ModifiedCount > 0 {
+	if res.UpsertedCount > 0 || res.ModifiedCount > 0 || res.MatchedCount > 0 {
 		return nil
 	}
 

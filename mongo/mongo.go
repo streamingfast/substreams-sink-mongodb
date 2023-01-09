@@ -65,10 +65,15 @@ func (l *Loader) Save(ctx context.Context, collectionName string, id string, ent
 	collection := l.database.Collection(collectionName)
 	update := bson.M{"$set": entity}
 
-	_, err := collection.UpdateByID(ctx, id, update, options.Update().SetUpsert(true))
+	res, err := collection.UpdateByID(ctx, id, update, options.Update().SetUpsert(true))
 	if err != nil {
 		return err
 	}
+
+	if res.UpsertedCount == 0 {
+		return errors.New("no document inserted")
+	}
+
 	return nil
 }
 
@@ -84,7 +89,7 @@ func (l *Loader) Update(ctx context.Context, collectionName string, id string, c
 		return err
 	}
 
-	if res.ModifiedCount == 0 {
+	if res.MatchedCount == 0 && res.UpsertedCount == 0 && res.ModifiedCount == 0 && res.UpsertedID == nil {
 		return errors.New("no document updated")
 	}
 
@@ -97,9 +102,14 @@ func (l *Loader) Delete(ctx context.Context, collectionName string, id string) e
 
 	collection := l.database.Collection(collectionName)
 	filter := bson.M{"id": id}
-	_, err := collection.DeleteOne(ctx, filter)
+	res, err := collection.DeleteOne(ctx, filter)
 	if err != nil {
 		return err
 	}
+
+	if res.DeletedCount == 0 {
+		return errors.New("no document deleted")
+	}
+
 	return nil
 }
