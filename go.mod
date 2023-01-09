@@ -3,6 +3,7 @@ module github.com/streamingfast/substreams-sink-mongodb
 go 1.18
 
 require (
+	github.com/golang/protobuf v1.5.2
 	github.com/spf13/cobra v1.4.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.0
@@ -13,7 +14,7 @@ require (
 	github.com/streamingfast/logging v0.0.0-20220511154537-ce373d264338
 	github.com/streamingfast/shutter v1.5.0
 	github.com/streamingfast/substreams v0.0.22-0.20221126024811-f5b974d8ed73
-	github.com/streamingfast/substreams-sink v0.0.0-20221126181610-9684cae306cd
+	github.com/streamingfast/substreams-sink v0.0.0-20230109131242-c4f476b5db87
 	github.com/stretchr/testify v1.8.0
 	go.mongodb.org/mongo-driver v1.9.1
 	go.uber.org/zap v1.21.0
@@ -45,7 +46,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/uuid v1.3.0 // indirect

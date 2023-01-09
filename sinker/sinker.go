@@ -127,6 +127,11 @@ func (s *MongoSinker) Run(ctx context.Context) error {
 		s.OutputModuleHash,
 		s.handleBlockScopeData,
 		s.ClientConfig,
+		[]pbsubstreams.ForkStep{
+			pbsubstreams.ForkStep_STEP_NEW,
+			pbsubstreams.ForkStep_STEP_UNDO,
+			pbsubstreams.ForkStep_STEP_IRREVERSIBLE,
+		},
 		s.logger,
 		s.tracer,
 	)
