@@ -15,7 +15,7 @@ main() {
   $sink run \
     ${dsn} \
     "mainnet.eth.streamingfast.io:443" \
-    "./substreams-v0.0.1.spkg" \
+    "https://github.com/streamingfast/substreams-eth-block-meta/releases/download/v0.3.0/substreams-eth-block-meta-v0.3.0.spkg" \
     "db_out" \
     "12287507:12293007" \
     "$@"

@@ -89,8 +89,8 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("ouput module %q is *not* of  type 'Mapper'", outputModuleName)
 	}
 
-	if module.Output.Type != "proto:substreams.database.v1.DatabaseChanges" {
-		return fmt.Errorf("postgresql sync only supports maps with output type 'proto:substreams.database.v1.DatabaseChanges'")
+	if module.Output.Type != "proto:sf.substreams.database.v1.DatabaseChanges" {
+		return fmt.Errorf("sync only supports maps with output type 'proto:sf.substreams.database.v1.DatabaseChanges'")
 	}
 	hashes := manifest.NewModuleHashes()
 	outputModuleHash := hashes.HashModule(pkg.Modules, module, graph)
