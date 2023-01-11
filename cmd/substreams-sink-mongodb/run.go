@@ -28,6 +28,7 @@ var SinkRunCmd = Command(sinkRunE,
 		flags.BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
 		flags.BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
 		flags.Int("undo-buffer-size", 0, "Number of blocks to keep buffered to handle fork reorganizations")
+		flags.Int("live-block-time-delta", 300, "Consider chain live if block time is within this number of seconds of current time. Default: 300 (5 minutes)")
 	}),
 	AfterAllHook(func(_ *cobra.Command) {
 		sinker.RegisterMetrics()
@@ -106,16 +107,22 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 
 	apiToken := readAPIToken()
 
+	liveBlockTimeDelta, err := time.ParseDuration(fmt.Sprintf("%ds", viper.GetInt("run-live-block-time-delta")))
+	if err != nil {
+		return fmt.Errorf("parsing live-block-time-delta: %w", err)
+	}
+
 	config := &sinker.Config{
-		DBLoader:         mongoLoader,
-		DBName:           databaseName,
-		BlockRange:       blockRange,
-		DDL:              tables,
-		Pkg:              pkg,
-		OutputModule:     module,
-		OutputModuleName: outputModuleName,
-		OutputModuleHash: outputModuleHash,
-		UndoBufferSize:   viper.GetInt("run-undo-buffer-size"),
+		DBLoader:           mongoLoader,
+		DBName:             databaseName,
+		BlockRange:         blockRange,
+		DDL:                tables,
+		Pkg:                pkg,
+		OutputModule:       module,
+		OutputModuleName:   outputModuleName,
+		OutputModuleHash:   outputModuleHash,
+		UndoBufferSize:     viper.GetInt("run-undo-buffer-size"),
+		LiveBlockTimeDelta: liveBlockTimeDelta,
 		ClientConfig: client.NewSubstreamsClientConfig(
 			endpoint,
 			apiToken,

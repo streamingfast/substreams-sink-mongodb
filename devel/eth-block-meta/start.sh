@@ -15,9 +15,8 @@ main() {
   $sink run \
     ${dsn} \
     "api-unstable.streamingfast.io:443" \
-    "./substreams.spkg" \
+    "https://github.com/streamingfast/substreams-eth-block-meta/releases/download/v0.3.0/substreams-eth-block-meta-v0.3.0.spkg" \
     "db_out" \
-    "-1" \
     "$@"
 }
 

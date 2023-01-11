@@ -1,8 +1,0 @@
-{
-  "token_ownerships": {
-    "block_num": "integer",
-    "token_id": "integer",
-    "quantity": "integer",
-    "created_at": "timestamp"
-  }
-}

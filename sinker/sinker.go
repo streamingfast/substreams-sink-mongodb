@@ -21,7 +21,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const BLOCK_PROGRESS = 1000
+const (
+	BLOCK_PROGRESS      = 1000
+	LIVE_BLOCK_PROGRESS = 1
+)
 
 type MongoSinker struct {
 	*shutter.Shutter
@@ -35,7 +38,8 @@ type MongoSinker struct {
 	OutputModuleHash manifest.ModuleHash
 	ClientConfig     *client.SubstreamsClientConfig
 
-	UndoBufferSize int
+	UndoBufferSize  int
+	LivenessTracker *sink.LivenessChecker
 
 	sink       *sink.Sinker
 	lastCursor *sink.Cursor
@@ -52,7 +56,8 @@ type Config struct {
 
 	DDL mongo.Tables
 
-	UndoBufferSize int
+	UndoBufferSize     int
+	LiveBlockTimeDelta time.Duration
 
 	BlockRange       string
 	Pkg              *pbsubstreams.Package
@@ -77,7 +82,8 @@ func New(config *Config, logger *zap.Logger, tracer logging.Tracer) (*MongoSinke
 		OutputModuleHash: config.OutputModuleHash,
 		ClientConfig:     config.ClientConfig,
 
-		UndoBufferSize: config.UndoBufferSize,
+		UndoBufferSize:  config.UndoBufferSize,
+		LivenessTracker: sink.NewLivenessChecker(config.LiveBlockTimeDelta),
 	}
 
 	s.OnTerminating(func(err error) {
@@ -260,11 +266,18 @@ func (s *MongoSinker) handleBlockScopeData(ctx context.Context, cursor *sink.Cur
 
 	s.lastCursor = cursor
 
-	if cursor.Block.Num()%BLOCK_PROGRESS == 0 {
+	if cursor.Block.Num()%s.batchBlockModulo(data) == 0 {
 		if err := s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), cursor); err != nil {
 			return fmt.Errorf("failed to roll: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func (s *MongoSinker) batchBlockModulo(blockData *pbsubstreams.BlockScopedData) uint64 {
+	if s.LivenessTracker.IsLive(blockData) {
+		return LIVE_BLOCK_PROGRESS
+	}
+	return BLOCK_PROGRESS
 }
