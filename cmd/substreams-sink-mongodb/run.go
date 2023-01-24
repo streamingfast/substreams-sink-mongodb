@@ -27,7 +27,7 @@ var SinkRunCmd = Command(sinkRunE,
 	Flags(func(flags *pflag.FlagSet) {
 		flags.BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
 		flags.BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
-		flags.Int("undo-buffer-size", 0, "Number of blocks to keep buffered to handle fork reorganizations")
+		flags.Int("undo-buffer-size", 12, "Number of blocks to keep buffered to handle fork reorganizations")
 		flags.Int("live-block-time-delta", 300, "Consider chain live if block time is within this number of seconds of current time. Default: 300 (5 minutes)")
 	}),
 	AfterAllHook(func(_ *cobra.Command) {

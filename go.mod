@@ -14,7 +14,7 @@ require (
 	github.com/streamingfast/logging v0.0.0-20220511154537-ce373d264338
 	github.com/streamingfast/shutter v1.5.0
 	github.com/streamingfast/substreams v0.0.22-0.20221126024811-f5b974d8ed73
-	github.com/streamingfast/substreams-sink v0.0.0-20230111182819-e90f6922406a
+	github.com/streamingfast/substreams-sink v0.0.0-20230124233801-eba20616e1fe
 	github.com/stretchr/testify v1.8.0
 	go.mongodb.org/mongo-driver v1.9.1
 	go.uber.org/zap v1.21.0
