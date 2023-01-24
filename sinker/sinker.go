@@ -138,7 +138,7 @@ func (s *MongoSinker) Run(ctx context.Context) error {
 	}
 
 	s.sink, err = sink.New(
-		sink.SubstreamsModeDevelopment, // fixme: change back to production mode
+		sink.SubstreamsModeProduction,
 		s.Pkg.Modules,
 		s.OutputModule,
 		s.OutputModuleHash,

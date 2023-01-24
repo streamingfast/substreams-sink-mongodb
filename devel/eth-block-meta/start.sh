@@ -11,12 +11,16 @@ main() {
   sink="$ROOT/../substreams-sink-mongodb"
 
   echo dsn
+  set -x
 
   $sink run \
     ${dsn} \
+    substreams \
+    ${ROOT}/schema.json \
     "api-unstable.streamingfast.io:443" \
     "https://github.com/streamingfast/substreams-eth-block-meta/releases/download/v0.4.0/substreams-eth-block-meta-v0.4.0.spkg" \
     "db_out" \
+    0:10000 \
     "$@"
 }
 
