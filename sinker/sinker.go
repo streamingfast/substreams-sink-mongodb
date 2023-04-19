@@ -2,7 +2,6 @@ package sinker
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,172 +13,126 @@ import (
 	sink "github.com/streamingfast/substreams-sink"
 	"github.com/streamingfast/substreams-sink-mongodb/mongo"
 	pbdatabase "github.com/streamingfast/substreams-sink-mongodb/pb/substreams/sink/database/v1"
-	"github.com/streamingfast/substreams/client"
-	"github.com/streamingfast/substreams/manifest"
+	pbsubstreamsrpc "github.com/streamingfast/substreams/pb/sf/substreams/rpc/v2"
 	pbsubstreams "github.com/streamingfast/substreams/pb/sf/substreams/v1"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	BLOCK_PROGRESS      = 1000
-	LIVE_BLOCK_PROGRESS = 1
-)
-
 type MongoSinker struct {
 	*shutter.Shutter
+	*sink.Sinker
 
-	DBLoader *mongo.Loader
-	Tables   mongo.Tables
-
-	Pkg              *pbsubstreams.Package
-	OutputModule     *pbsubstreams.Module
-	OutputModuleName string
-	OutputModuleHash manifest.ModuleHash
-	ClientConfig     *client.SubstreamsClientConfig
-
-	UndoBufferSize  int
-	LivenessTracker *sink.LivenessChecker
-
-	sink       *sink.Sinker
-	lastCursor *sink.Cursor
-
-	blockRange *bstream.Range
-
+	loader *mongo.Loader
+	tables mongo.Tables
 	logger *zap.Logger
 	tracer logging.Tracer
+
+	stats      *Stats
+	lastCursor *sink.Cursor
 }
 
-type Config struct {
-	DBLoader *mongo.Loader
-	DBName   string
-
-	DDL mongo.Tables
-
-	UndoBufferSize     int
-	LiveBlockTimeDelta time.Duration
-
-	BlockRange       string
-	Pkg              *pbsubstreams.Package
-	OutputModule     *pbsubstreams.Module
-	OutputModuleName string
-	OutputModuleHash manifest.ModuleHash
-	ClientConfig     *client.SubstreamsClientConfig
-}
-
-func New(config *Config, logger *zap.Logger, tracer logging.Tracer) (*MongoSinker, error) {
+func New(sink *sink.Sinker, loader *mongo.Loader, tables mongo.Tables, logger *zap.Logger, tracer logging.Tracer) (*MongoSinker, error) {
 	s := &MongoSinker{
 		Shutter: shutter.New(),
-		logger:  logger,
-		tracer:  tracer,
+		Sinker:  sink,
 
-		Tables: config.DDL,
+		loader: loader,
+		tables: tables,
+		logger: logger,
+		tracer: tracer,
 
-		DBLoader:         config.DBLoader,
-		Pkg:              config.Pkg,
-		OutputModule:     config.OutputModule,
-		OutputModuleName: config.OutputModuleName,
-		OutputModuleHash: config.OutputModuleHash,
-		ClientConfig:     config.ClientConfig,
-
-		UndoBufferSize:  config.UndoBufferSize,
-		LivenessTracker: sink.NewLivenessChecker(config.LiveBlockTimeDelta),
+		stats: NewStats(logger),
 	}
 
 	s.OnTerminating(func(err error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		s.Stop(ctx, err)
+		s.writeLastCursor(ctx, err)
 	})
-
-	var err error
-	s.blockRange, err = resolveBlockRange(config.BlockRange, config.OutputModule)
-	if err != nil {
-		return nil, fmt.Errorf("resolve block range: %w", err)
-	}
 
 	return s, nil
 }
 
-func (s *MongoSinker) Stop(ctx context.Context, err error) {
+func (s *MongoSinker) writeLastCursor(ctx context.Context, err error) {
 	if s.lastCursor == nil || err != nil {
 		return
 	}
 
-	_ = s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), s.lastCursor)
+	_ = s.loader.WriteCursor(ctx, s.OutputModuleHash(), s.lastCursor)
 }
 
-func (s *MongoSinker) Start(ctx context.Context) error {
-	return s.Run(ctx)
-}
-
-func (s *MongoSinker) Run(ctx context.Context) error {
-	cursor, err := s.DBLoader.GetCursor(ctx, hex.EncodeToString(s.OutputModuleHash))
+func (s *MongoSinker) Run(ctx context.Context) {
+	cursor, err := s.loader.GetCursor(ctx, s.OutputModuleHash())
 	if err != nil && !errors.Is(err, mongo.ErrCursorNotFound) {
-		return fmt.Errorf("unable to get cursor: %w", err)
+		s.Shutdown(fmt.Errorf("unable to retrieve cursor: %w", err))
+		return
 	}
 
-	if errors.Is(err, mongo.ErrCursorNotFound) {
-		cursorStartBlock := s.OutputModule.InitialBlock
-		if s.blockRange.StartBlock() > 0 {
-			cursorStartBlock = s.blockRange.StartBlock() - 1
-		}
-
-		cursor = sink.NewCursor("", bstream.NewBlockRef("", cursorStartBlock))
-
-		if err = s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), cursor); err != nil {
-			return fmt.Errorf("failed to create initial cursor: %w", err)
-		}
-	}
-
-	var sinkOptions []sink.Option
-	if s.UndoBufferSize > 0 {
-		sinkOptions = append(sinkOptions, sink.WithBlockDataBuffer(s.UndoBufferSize))
-	}
-
-	s.sink, err = sink.New(
-		sink.SubstreamsModeProduction,
-		s.Pkg.Modules,
-		s.OutputModule,
-		s.OutputModuleHash,
-		s.handleBlockScopeData,
-		s.ClientConfig,
-		[]pbsubstreams.ForkStep{
-			pbsubstreams.ForkStep_STEP_NEW,
-			pbsubstreams.ForkStep_STEP_UNDO,
-			pbsubstreams.ForkStep_STEP_IRREVERSIBLE,
-		},
-		s.logger,
-		s.tracer,
-		sinkOptions...,
-	)
-	if err != nil {
-		return fmt.Errorf("unable to create sink: %w", err)
-	}
-
-	s.sink.OnTerminating(s.Shutdown)
+	s.Sinker.OnTerminating(s.Shutdown)
 	s.OnTerminating(func(err error) {
-		s.logger.Info("terminating sink")
-		s.sink.Shutdown(err)
+		s.stats.LogNow()
+		s.logger.Info("mongodb sinker terminating", zap.Stringer("last_block_written", s.stats.lastBlock))
+		s.Sinker.Shutdown(err)
 	})
 
-	if err := s.sink.Start(ctx, s.blockRange, cursor); err != nil {
-		return fmt.Errorf("sink failed: %w", err)
+	s.OnTerminating(func(_ error) { s.stats.Close() })
+	s.stats.OnTerminated(func(err error) { s.Shutdown(err) })
+
+	logEach := 15 * time.Second
+	if s.logger.Core().Enabled(zap.DebugLevel) {
+		logEach = 5 * time.Second
 	}
+
+	s.stats.Start(logEach, cursor)
+
+	s.logger.Info("starting mongodb sink", zap.Duration("stats_refresh_each", logEach), zap.Stringer("restarting_at", cursor.Block()))
+	s.Sinker.Run(ctx, cursor, s)
+}
+
+func (s *MongoSinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrpc.BlockScopedData, isLive *bool, cursor *sink.Cursor) error {
+	output := data.Output
+
+	if output.Name != s.OutputModuleName() {
+		return fmt.Errorf("received data from wrong output module, expected to received from %q but got module's output for %q", s.OutputModuleName(), output.Name)
+	}
+
+	dbChanges := &pbdatabase.DatabaseChanges{}
+	err := proto.Unmarshal(output.GetMapOutput().GetValue(), dbChanges)
+	if err != nil {
+		return fmt.Errorf("unmarshal database changes: %w", err)
+	}
+
+	err = s.applyDatabaseChanges(ctx, dataAsBlockRef(data), dbChanges)
+	if err != nil {
+		return fmt.Errorf("apply database changes: %w", err)
+	}
+
+	s.lastCursor = cursor
 
 	return nil
 }
 
-func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, blockId string, blockNum uint64, databaseChanges *pbdatabase.DatabaseChanges) (err error) {
+func (s *MongoSinker) HandleBlockUndoSignal(ctx context.Context, data *pbsubstreamsrpc.BlockUndoSignal, cursor *sink.Cursor) error {
+	return fmt.Errorf("received undo signal but there is no handling of undo, this is because you used `--undo-buffer-size=0` which is invalid right now")
+}
+
+func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, block bstream.BlockRef, databaseChanges *pbdatabase.DatabaseChanges) (err error) {
+	startTime := time.Now()
+	defer func() {
+		FlushDuration.AddInt64(time.Since(startTime).Nanoseconds())
+	}()
+
 	for _, change := range databaseChanges.TableChanges {
 		id := change.Pk
 		switch change.Operation {
 		case pbdatabase.TableChange_UNSET:
 		case pbdatabase.TableChange_CREATE:
 			entity := map[string]interface{}{}
+
 			for _, field := range change.Fields {
 				var newValue interface{} = field.NewValue
-				if fs, found := s.Tables[change.Table]; found {
+				if fs, found := s.tables[change.Table]; found {
 					if f, found := fs[field.Name]; found {
 						switch f {
 						case mongo.INTEGER:
@@ -220,64 +173,40 @@ func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, blockId string, 
 				}
 				entity[field.Name] = newValue
 			}
-			err := s.DBLoader.Save(ctx, change.Table, id, entity)
+			err := s.loader.Save(ctx, change.Table, id, entity)
 			if err != nil {
-				return fmt.Errorf("saving entity %s with id %s: %w (block num: %d id %s)", change.Table, id, err, blockNum, blockId)
+				return fmt.Errorf("saving entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 			}
 		case pbdatabase.TableChange_UPDATE:
 			entityChanges := map[string]interface{}{}
 			for _, field := range change.Fields {
 				entityChanges[field.Name] = field.NewValue
 			}
-			err := s.DBLoader.Update(ctx, change.Table, change.Pk, entityChanges)
+			err := s.loader.Update(ctx, change.Table, change.Pk, entityChanges)
 			if err != nil {
-				return fmt.Errorf("updating entity %s with id %s: %w (block num: %d id %s)", change.Table, id, err, blockNum, blockId)
+				return fmt.Errorf("updating entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 			}
 		case pbdatabase.TableChange_DELETE:
 			for range change.Fields {
-				err := s.DBLoader.Delete(ctx, change.Table, change.Pk)
+				err := s.loader.Delete(ctx, change.Table, change.Pk)
 				if err != nil {
-					return fmt.Errorf("deleting entity %s with id %s: %w (block num: %d id %s)", change.Table, id, err, blockNum, blockId)
+					return fmt.Errorf("deleting entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 				}
 			}
 		}
 	}
 
-	return nil
-}
-
-func (s *MongoSinker) handleBlockScopeData(ctx context.Context, cursor *sink.Cursor, data *pbsubstreams.BlockScopedData) error {
-	for _, output := range data.Outputs {
-		if output.Name != s.OutputModuleName {
-			continue
-		}
-
-		dbChanges := &pbdatabase.DatabaseChanges{}
-		err := proto.Unmarshal(output.GetMapOutput().GetValue(), dbChanges)
-		if err != nil {
-			return fmt.Errorf("unmarshal database changes: %w", err)
-		}
-
-		err = s.applyDatabaseChanges(ctx, data.Clock.Id, data.Clock.Number, dbChanges)
-		if err != nil {
-			return fmt.Errorf("apply database changes: %w", err)
-		}
-	}
-
-	s.lastCursor = cursor
-
-	if cursor.Block.Num()%s.batchBlockModulo(data) == 0 {
-		if err := s.DBLoader.WriteCursor(ctx, hex.EncodeToString(s.OutputModuleHash), cursor); err != nil {
-			return fmt.Errorf("failed to roll: %w", err)
-		}
-	}
+	FlushCount.Inc()
+	FlushedEntriesCount.AddInt(len(databaseChanges.TableChanges))
+	s.stats.RecordBlock(block)
 
 	return nil
 }
 
-func (s *MongoSinker) batchBlockModulo(blockData *pbsubstreams.BlockScopedData) uint64 {
-	if s.LivenessTracker.IsLive(blockData) {
-		return LIVE_BLOCK_PROGRESS
-	}
-	return BLOCK_PROGRESS
+func dataAsBlockRef(blockData *pbsubstreamsrpc.BlockScopedData) bstream.BlockRef {
+	return clockAsBlockRef(blockData.Clock)
+}
+
+func clockAsBlockRef(clock *pbsubstreams.Clock) bstream.BlockRef {
+	return bstream.NewBlockRef(clock.Id, clock.Number)
 }

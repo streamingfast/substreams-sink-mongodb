@@ -9,18 +9,15 @@ main() {
 
   dsn="${MONGO_DSN:-"mongodb://root:root@localhost:27017"}"
   sink="$ROOT/../substreams-sink-mongodb"
-
-  echo dsn
-  set -x
+  substreams_spkg="${SUBSTREAMS_SPKG:-"https://github.com/streamingfast/substreams-eth-block-meta/releases/download/v0.4.1/substreams-eth-block-meta-v0.4.1.spkg"}"
 
   $sink run \
     ${dsn} \
-    substreams \
+    dev_db \
     ${ROOT}/schema.json \
-    "api-unstable.streamingfast.io:443" \
-    "https://github.com/streamingfast/substreams-eth-block-meta/releases/download/v0.4.0/substreams-eth-block-meta-v0.4.0.spkg" \
+    "mainnet.eth.streamingfast.io:443" \
+    "$substreams_spkg" \
     "db_out" \
-    0:10000 \
     "$@"
 }
 

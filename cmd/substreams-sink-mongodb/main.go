@@ -1,41 +1,27 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	. "github.com/streamingfast/cli"
+	"github.com/streamingfast/cli/sflags"
 	"github.com/streamingfast/dmetrics"
-	"github.com/streamingfast/logging"
 	"go.uber.org/zap"
 )
-
-// Commit sha1 value, injected via go build `ldflags` at build time
-var commit = ""
 
 // Version value, injected via go build `ldflags` at build time
 var version = "dev"
 
-// Date value, injected via go build `ldflags` at build time
-var date = ""
-
-var zlog, tracer = logging.RootLogger("sink-mongodb", "github.com/streamingfast/substreams-sink-mongodb/cmd/substreams-sink-mongodb")
-
-func init() {
-	logging.InstantiateLoggers(logging.WithDefaultLevel(zap.InfoLevel))
-}
-
 func main() {
 	Run("substreams-sink-mongodb", "Substreams MongoDB Sink",
-		SinkRunCmd,
 
-		ConfigureViper("SINK"),
-		ConfigureVersion(),
+		sinkRunCmd,
+
+		ConfigureViper("SINK_MONGODB"),
+		ConfigureVersion(version),
 
 		PersistentFlags(
 			func(flags *pflag.FlagSet) {
@@ -45,47 +31,30 @@ func main() {
 			},
 		),
 		AfterAllHook(func(cmd *cobra.Command) {
-			cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
-				delay := viper.GetDuration("global-delay-before-start")
-				if delay > 0 {
-					zlog.Info("sleeping to respect delay before start setting", zap.Duration("delay", delay))
-					time.Sleep(delay)
-				}
-
-				if v := viper.GetString("global-metrics-listen-addr"); v != "" {
-					zlog.Info("starting prometheus metrics server", zap.String("listen_addr", v))
-					go dmetrics.Serve(v)
-				}
-
-				if v := viper.GetString("global-pprof-listen-addr"); v != "" {
-					go func() {
-						zlog.Info("starting pprof server", zap.String("listen_addr", v))
-						err := http.ListenAndServe(v, nil)
-						if err != nil {
-							zlog.Debug("unable to start profiling server", zap.Error(err), zap.String("listen_addr", v))
-						}
-					}()
-				}
-			}
+			cmd.PersistentPreRun = preStart
 		}),
 	)
 }
 
-func ConfigureVersion() CommandOption {
-	return CommandOptionFunc(func(cmd *cobra.Command) {
-		var labels []string
-		if len(commit) >= 7 {
-			labels = append(labels, fmt.Sprintf("Commit %s", commit[0:7]))
-		}
+func preStart(cmd *cobra.Command, _ []string) {
+	delay := sflags.MustGetDuration(cmd, "delay-before-start")
+	if delay > 0 {
+		zlog.Info("sleeping to respect delay before start setting", zap.Duration("delay", delay))
+		time.Sleep(delay)
+	}
 
-		if date != "" {
-			labels = append(labels, fmt.Sprintf("Built %s", date))
-		}
+	if v := sflags.MustGetString(cmd, "metrics-listen-addr"); v != "" {
+		zlog.Info("starting prometheus metrics server", zap.String("listen_addr", v))
+		go dmetrics.Serve(v)
+	}
 
-		cmd.Version = version
-
-		if len(labels) != 0 {
-			cmd.Version = fmt.Sprintf("%s (%s)", version, strings.Join(labels, ", "))
-		}
-	})
+	if v := sflags.MustGetString(cmd, "pprof-listen-addr"); v != "" {
+		go func() {
+			zlog.Info("starting pprof server", zap.String("listen_addr", v))
+			err := http.ListenAndServe(v, nil)
+			if err != nil {
+				zlog.Debug("unable to start profiling server", zap.Error(err), zap.String("listen_addr", v))
+			}
+		}()
+	}
 }

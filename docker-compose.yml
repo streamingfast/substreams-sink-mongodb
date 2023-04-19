@@ -1,0 +1,27 @@
+version: '3.7'
+services:
+  mongodb:
+    container_name: mongo-ssm
+    image: mongo:5
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    ports:
+      - 27017:27017
+    volumes:
+      - ./devel/data/mongodb:/data/db
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "27017"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+
+  mongo-express:
+    image: mongo-ui-ssm
+    restart: always
+    ports:
+      - 8081:8081
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: root
+      ME_CONFIG_MONGODB_URL: mongodb://root:root@mongo:27017

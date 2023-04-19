@@ -28,8 +28,7 @@ const (
 type Loader struct {
 	client   *mongo.Client
 	database *mongo.Database
-
-	Collections Tables
+	tables   Tables
 
 	cursorCollectionName string
 	entityCollectionName string

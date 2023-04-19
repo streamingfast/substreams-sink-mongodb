@@ -9,30 +9,23 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
+	"github.com/streamingfast/cli"
 	. "github.com/streamingfast/cli"
-	"github.com/streamingfast/derr"
 	"github.com/streamingfast/shutter"
+	sink "github.com/streamingfast/substreams-sink"
 	"github.com/streamingfast/substreams-sink-mongodb/mongo"
 	"github.com/streamingfast/substreams-sink-mongodb/sinker"
-	"github.com/streamingfast/substreams/client"
-	"github.com/streamingfast/substreams/manifest"
 	"go.uber.org/zap"
 )
 
-var SinkRunCmd = Command(sinkRunE,
+var sinkRunCmd = Command(sinkRunE,
 	"run <dsn> <database_name> <schema> <endpoint> <manifest> <module> [<start>:<stop>]",
-	"Runs extractor code",
+	"Runs MongoDB sink process",
 	RangeArgs(6, 7),
 	Flags(func(flags *pflag.FlagSet) {
-		flags.BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
-		flags.BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
-		flags.Int("undo-buffer-size", 12, "Number of blocks to keep buffered to handle fork reorganizations")
-		flags.Int("live-block-time-delta", 300, "Consider chain live if block time is within this number of seconds of current time. Default: 300 (5 minutes)")
+		sink.AddFlagsToSet(flags)
 	}),
-	AfterAllHook(func(_ *cobra.Command) {
-		sinker.RegisterMetrics()
-	}),
+	OnCommandErrorLogAndExit(zlog),
 )
 
 func sinkRunE(cmd *cobra.Command, args []string) error {
@@ -42,6 +35,9 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 	app.OnTerminating(func(_ error) {
 		cancelApp()
 	})
+
+	sink.RegisterMetrics()
+	sinker.RegisterMetrics()
 
 	mongoDSN := args[0]
 	databaseName := args[1]
@@ -60,8 +56,7 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	var tables mongo.Tables
-	err = json.Unmarshal(schemaContent, &tables)
-	if err != nil {
+	if err := json.Unmarshal(schemaContent, &tables); err != nil {
 		return fmt.Errorf("unmarshalling schema file: %w", err)
 	}
 
@@ -70,102 +65,54 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unable to create mongo loader: %w", err)
 	}
 
-	zlog.Info("reading substreams manifest", zap.String("manifest_path", manifestPath))
-	pkg, err := manifest.NewReader(manifestPath).Read()
-	if err != nil {
-		return fmt.Errorf("read manifest: %w", err)
-	}
-
-	graph, err := manifest.NewModuleGraph(pkg.Modules.Modules)
-	if err != nil {
-		return fmt.Errorf("create substreams moduel graph: %w", err)
-	}
-
-	zlog.Info("validating output store", zap.String("output_store", outputModuleName))
-	module, err := graph.Module(outputModuleName)
-	if err != nil {
-		return fmt.Errorf("get output module %q: %w", outputModuleName, err)
-	}
-	if module.GetKindMap() == nil {
-		return fmt.Errorf("ouput module %q is *not* of  type 'Mapper'", outputModuleName)
-	}
-
-	if module.Output.Type != "proto:sf.substreams.database.v1.DatabaseChanges" {
-		return fmt.Errorf("sync only supports maps with output type 'proto:sf.substreams.database.v1.DatabaseChanges'")
-	}
-	hashes := manifest.NewModuleHashes()
-	outputModuleHash := hashes.HashModule(pkg.Modules, module, graph)
-
-	resolvedStartBlock, resolvedStopBlock, err := readBlockRange(module, blockRange)
-	if err != nil {
-		return fmt.Errorf("resolve block range: %w", err)
-	}
-	zlog.Info("resolved block range",
-		zap.Int64("start_block", resolvedStartBlock),
-		zap.Uint64("stop_block", resolvedStopBlock),
+	sink, err := sink.NewFromViper(
+		cmd,
+		"sf.substreams.sink.database.v1.DatabaseChanges",
+		endpoint, manifestPath, outputModuleName, blockRange,
+		zlog,
+		tracer,
 	)
-
-	apiToken := readAPIToken()
-
-	liveBlockTimeDelta, err := time.ParseDuration(fmt.Sprintf("%ds", viper.GetInt("run-live-block-time-delta")))
 	if err != nil {
-		return fmt.Errorf("parsing live-block-time-delta: %w", err)
+		return fmt.Errorf("unable to setup sinker: %w", err)
 	}
 
-	config := &sinker.Config{
-		DBLoader:           mongoLoader,
-		DBName:             databaseName,
-		BlockRange:         blockRange,
-		DDL:                tables,
-		Pkg:                pkg,
-		OutputModule:       module,
-		OutputModuleName:   outputModuleName,
-		OutputModuleHash:   outputModuleHash,
-		UndoBufferSize:     viper.GetInt("run-undo-buffer-size"),
-		LiveBlockTimeDelta: liveBlockTimeDelta,
-		ClientConfig: client.NewSubstreamsClientConfig(
-			endpoint,
-			apiToken,
-			viper.GetBool("run-insecure"),
-			viper.GetBool("run-plaintext"),
-		),
-	}
-
-	mongoSinker, err := sinker.New(config, zlog, tracer)
+	mongoSinker, err := sinker.New(sink, mongoLoader, tables, zlog, tracer)
 	if err != nil {
-		return fmt.Errorf("unable to create sinker: %w", err)
+		return fmt.Errorf("unable to setup mongo sinker: %w", err)
 	}
+
 	mongoSinker.OnTerminating(app.Shutdown)
-
 	app.OnTerminating(func(err error) {
-		zlog.Info("application terminating, shutting down sinker", zap.Error(err))
 		mongoSinker.Shutdown(err)
 	})
 
 	go func() {
-		if err := mongoSinker.Start(ctx); err != nil {
-			zlog.Error("sinker start failed", zap.Error(err))
-			mongoSinker.Shutdown(err)
-		}
+		mongoSinker.Run(ctx)
 	}()
 
-	signalHandler := derr.SetupSignalHandler(0 * time.Second)
 	zlog.Info("ready, waiting for signal to quit")
+
+	signalHandler, isSignaled, _ := cli.SetupSignalHandler(0*time.Second, zlog)
 	select {
 	case <-signalHandler:
-		zlog.Info("received termination signal, quitting application")
 		go app.Shutdown(nil)
+		break
 	case <-app.Terminating():
-		NoError(app.Err(), "application shutdown unexpectedly, quitting")
+		zlog.Info("run terminating", zap.Bool("from_signal", isSignaled.Load()), zap.Bool("with_error", app.Err() != nil))
+		break
 	}
 
-	zlog.Info("waiting for app termination")
+	zlog.Info("waiting for run termination")
 	select {
 	case <-app.Terminated():
-	case <-ctx.Done():
 	case <-time.After(30 * time.Second):
-		zlog.Error("application did not terminated within 30s, forcing exit")
+		zlog.Warn("application did not terminate within 30s")
 	}
 
+	if err := app.Err(); err != nil {
+		return err
+	}
+
+	zlog.Info("run terminated gracefully")
 	return nil
 }

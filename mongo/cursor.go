@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/streamingfast/bstream"
-
 	sink "github.com/streamingfast/substreams-sink"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -44,10 +42,7 @@ func (l *Loader) GetCursor(ctx context.Context, outputModuleHash string) (*sink.
 		return nil, fmt.Errorf("decoding cursor %q:  %w", outputModuleHash, err)
 	}
 
-	return &sink.Cursor{
-		Cursor: c.Cursor,
-		Block:  bstream.NewBlockRef(c.BlockID, c.BlockNum),
-	}, nil
+	return sink.NewCursor(c.Cursor)
 }
 
 func (l *Loader) WriteCursor(ctx context.Context, moduleHash string, c *sink.Cursor) error {
@@ -55,7 +50,7 @@ func (l *Loader) WriteCursor(ctx context.Context, moduleHash string, c *sink.Cur
 	defer cancel()
 
 	filter := bson.M{"id": moduleHash}
-	update := bson.M{"$set": cursorDocument{Id: moduleHash, Cursor: c.Cursor, BlockNum: c.Block.Num(), BlockID: c.Block.ID()}}
+	update := bson.M{"$set": cursorDocument{Id: moduleHash, Cursor: c.String(), BlockNum: c.Block().Num(), BlockID: c.Block().ID()}}
 
 	res, err := l.database.Collection("_cursors").UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
 	if err != nil {
@@ -68,7 +63,7 @@ func (l *Loader) WriteCursor(ctx context.Context, moduleHash string, c *sink.Cur
 
 	// else we need to insert it
 
-	_, err = l.database.Collection("_cursors").InsertOne(ctx, cursorDocument{Id: moduleHash, Cursor: c.Cursor, BlockNum: c.Block.Num(), BlockID: c.Block.ID()})
+	_, err = l.database.Collection("_cursors").InsertOne(ctx, cursorDocument{Id: moduleHash, Cursor: c.String(), BlockNum: c.Block().Num(), BlockID: c.Block().ID()})
 	if err != nil {
 		return fmt.Errorf("inserting cursor %q:  %w", moduleHash, err)
 	}
