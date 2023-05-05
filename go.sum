@@ -402,8 +402,8 @@ github.com/streamingfast/shutter v1.5.0 h1:NpzDYzj0HVpSiDJVO/FFSL6QIK/YKOxY0gJAt
 github.com/streamingfast/shutter v1.5.0/go.mod h1:B/T6efqdeMGbGwjzPS1ToXzYZI4kDzI5/u4I+7qbjY8=
 github.com/streamingfast/substreams v1.0.2-0.20230418195519-fa17a36fd728 h1:Gb/Qh63UjrIEUKfdHReM48JccBLSQ20+vqhNiRWT6rY=
 github.com/streamingfast/substreams v1.0.2-0.20230418195519-fa17a36fd728/go.mod h1:4UosoPtKfa1IPQ1myZQh3HBnBimmpmeYTLwIlKHbBVo=
-github.com/streamingfast/substreams-sink v0.1.1-0.20230420161857-72fa2fe5072f h1:UPWS6dPEdQJMQDvjtVwE2h3s3RqF11X4RVAdzv7GYrk=
-github.com/streamingfast/substreams-sink v0.1.1-0.20230420161857-72fa2fe5072f/go.mod h1:F0iZNIohBuQinI24Z3bMrmxNtMJpFRP6eP+mFxolCpk=
+github.com/streamingfast/substreams-sink v0.2.0 h1:dYyF7kKBxRYweIDwfcpWKfddODoYP5AVnVT7+pFqrz8=
+github.com/streamingfast/substreams-sink v0.2.0/go.mod h1:F0iZNIohBuQinI24Z3bMrmxNtMJpFRP6eP+mFxolCpk=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
