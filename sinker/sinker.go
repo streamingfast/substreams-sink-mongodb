@@ -117,6 +117,61 @@ func (s *MongoSinker) HandleBlockUndoSignal(ctx context.Context, data *pbsubstre
 	return fmt.Errorf("received undo signal but there is no handling of undo, this is because you used `--undo-buffer-size=0` which is invalid right now")
 }
 
+func (s *MongoSinker) ParseFieldsIntoDatabaseTypes(fields []*pbdatabase.Field, table string) (parsedFields map[string]interface{}, err error) {
+  parsedFields = make(map[string]interface{})
+	if fs, found := s.tables[table]; found {
+		for _, field := range fields {
+			var newValue interface{} = field.NewValue
+			if f, found := fs[field.Name]; found {
+				switch f {
+				case mongo.INTEGER:
+					newValue, err = strconv.ParseInt(field.NewValue, 10, 64)
+					if err != nil {
+						return
+					}
+				case mongo.DOUBLE:
+					newValue, err = strconv.ParseFloat(field.NewValue, 64)
+					if err != nil {
+						return
+					}
+				case mongo.BOOLEAN:
+					newValue, err = strconv.ParseBool(field.NewValue)
+					if err != nil {
+						return
+					}
+				case mongo.TIMESTAMP:
+					var tempValue int64
+					tempValue, err = strconv.ParseInt(field.NewValue, 10, 64)
+					if err != nil {
+						return
+					}
+					newValue = time.Unix(tempValue, 0)
+				case mongo.NULL:
+					if field.NewValue != "" {
+						return
+					}
+					newValue = nil
+				case mongo.DATE:
+					var tempValue time.Time
+					tempValue, err = time.Parse(time.RFC3339, field.NewValue)
+					if err != nil {
+						return
+					}
+					newValue = tempValue
+				default:
+					// string
+				}
+			}
+			parsedFields[field.Name] = newValue
+		}
+		return parsedFields, nil
+	}
+	for _, field := range fields {
+		parsedFields[field.Name] = field.NewValue
+	}
+	return parsedFields, nil
+}
+
 func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, block bstream.BlockRef, databaseChanges *pbdatabase.DatabaseChanges) (err error) {
 	startTime := time.Now()
 	defer func() {
@@ -128,61 +183,20 @@ func (s *MongoSinker) applyDatabaseChanges(ctx context.Context, block bstream.Bl
 		switch change.Operation {
 		case pbdatabase.TableChange_UNSET:
 		case pbdatabase.TableChange_CREATE:
-			entity := map[string]interface{}{}
-
-			for _, field := range change.Fields {
-				var newValue interface{} = field.NewValue
-				if fs, found := s.tables[change.Table]; found {
-					if f, found := fs[field.Name]; found {
-						switch f {
-						case mongo.INTEGER:
-							newValue, err = strconv.ParseInt(field.NewValue, 10, 64)
-							if err != nil {
-								return
-							}
-						case mongo.DOUBLE:
-							newValue, err = strconv.ParseFloat(field.NewValue, 64)
-							if err != nil {
-								return
-							}
-						case mongo.BOOLEAN:
-							newValue, err = strconv.ParseBool(field.NewValue)
-							if err != nil {
-								return
-							}
-						case mongo.TIMESTAMP:
-							var tempValue int64
-							tempValue, err = strconv.ParseInt(field.NewValue, 10, 64)
-							if err != nil {
-								return
-							}
-							newValue = time.Unix(tempValue, 0)
-						case mongo.NULL:
-							if field.NewValue != "" {
-								return
-							}
-							newValue = nil
-						case mongo.DATE:
-							var tempValue time.Time
-							tempValue, err = time.Parse(time.RFC3339, field.NewValue)
-							newValue = tempValue
-						default:
-							// string
-						}
-					}
-				}
-				entity[field.Name] = newValue
+			entity, err := s.ParseFieldsIntoDatabaseTypes(change.Fields, change.Table)
+			if err != nil {
+				return fmt.Errorf("error parsing entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 			}
-			err := s.loader.Save(ctx, change.Table, id, entity)
+			err = s.loader.Save(ctx, change.Table, id, entity)
 			if err != nil {
 				return fmt.Errorf("saving entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 			}
 		case pbdatabase.TableChange_UPDATE:
-			entityChanges := map[string]interface{}{}
-			for _, field := range change.Fields {
-				entityChanges[field.Name] = field.NewValue
+			entityChanges, err := s.ParseFieldsIntoDatabaseTypes(change.Fields, change.Table)
+			if err != nil {
+				return fmt.Errorf("error parsing entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 			}
-			err := s.loader.Update(ctx, change.Table, change.Pk, entityChanges)
+			err = s.loader.Update(ctx, change.Table, change.Pk, entityChanges)
 			if err != nil {
 				return fmt.Errorf("updating entity %s with id %s: %w (Block %s)", change.Table, id, err, block)
 			}
