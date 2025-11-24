@@ -24,6 +24,7 @@ var sinkRunCmd = Command(sinkRunE,
 	RangeArgs(6, 7),
 	Flags(func(flags *pflag.FlagSet) {
 		sink.AddFlagsToSet(flags)
+		flags.Uint64("cursor-checkpoint-interval", 100, "Number of blocks between cursor checkpoints (0 = only save on shutdown)")
 	}),
 	OnCommandErrorLogAndExit(zlog),
 )
@@ -76,7 +77,12 @@ func sinkRunE(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unable to setup sinker: %w", err)
 	}
 
-	mongoSinker, err := sinker.New(sink, mongoLoader, tables, zlog, tracer)
+	cursorCheckpointInterval, err := cmd.Flags().GetUint64("cursor-checkpoint-interval")
+	if err != nil {
+		return fmt.Errorf("unable to get cursor-checkpoint-interval flag: %w", err)
+	}
+
+	mongoSinker, err := sinker.New(sink, mongoLoader, tables, zlog, tracer, cursorCheckpointInterval)
 	if err != nil {
 		return fmt.Errorf("unable to setup mongo sinker: %w", err)
 	}

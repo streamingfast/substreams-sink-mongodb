@@ -28,11 +28,12 @@ type MongoSinker struct {
 	logger *zap.Logger
 	tracer logging.Tracer
 
-	stats      *Stats
-	lastCursor *sink.Cursor
+	stats                    *Stats
+	lastCursor               *sink.Cursor
+	cursorCheckpointInterval uint64
 }
 
-func New(sink *sink.Sinker, loader *mongo.Loader, tables mongo.Tables, logger *zap.Logger, tracer logging.Tracer) (*MongoSinker, error) {
+func New(sink *sink.Sinker, loader *mongo.Loader, tables mongo.Tables, logger *zap.Logger, tracer logging.Tracer, cursorCheckpointInterval uint64) (*MongoSinker, error) {
 	s := &MongoSinker{
 		Shutter: shutter.New(),
 		Sinker:  sink,
@@ -42,7 +43,8 @@ func New(sink *sink.Sinker, loader *mongo.Loader, tables mongo.Tables, logger *z
 		logger: logger,
 		tracer: tracer,
 
-		stats: NewStats(logger),
+		stats:                    NewStats(logger),
+		cursorCheckpointInterval: cursorCheckpointInterval,
 	}
 
 	s.OnTerminating(func(err error) {
@@ -55,16 +57,33 @@ func New(sink *sink.Sinker, loader *mongo.Loader, tables mongo.Tables, logger *z
 }
 
 func (s *MongoSinker) writeLastCursor(ctx context.Context, err error) {
-	if s.lastCursor == nil || err != nil {
+	if s.lastCursor == nil {
 		return
 	}
 
-	_ = s.loader.WriteCursor(ctx, s.OutputModuleHash(), s.lastCursor)
+	// Log whether we're saving on error or graceful shutdown
+	if err != nil {
+		s.logger.Info("saving cursor on error shutdown",
+			zap.Stringer("cursor_block", s.lastCursor.Block()),
+			zap.Error(err))
+	}
+
+	if writeErr := s.loader.WriteCursor(ctx, s.OutputModuleHash(), s.lastCursor); writeErr != nil {
+		s.logger.Error("failed to write cursor on shutdown",
+			zap.Stringer("cursor_block", s.lastCursor.Block()),
+			zap.Error(writeErr))
+	} else {
+		s.logger.Info("cursor saved on shutdown",
+			zap.Stringer("cursor_block", s.lastCursor.Block()))
+	}
 }
 
 func (s *MongoSinker) Run(ctx context.Context) {
 	cursor, err := s.loader.GetCursor(ctx, s.OutputModuleHash())
 	if err != nil && !errors.Is(err, mongo.ErrCursorNotFound) {
+		s.logger.Error("unable to retrieve cursor",
+			zap.String("module_hash", s.OutputModuleHash()),
+			zap.Error(err))
 		s.Shutdown(fmt.Errorf("unable to retrieve cursor: %w", err))
 		return
 	}
@@ -109,6 +128,22 @@ func (s *MongoSinker) HandleBlockScopedData(ctx context.Context, data *pbsubstre
 	}
 
 	s.lastCursor = cursor
+
+	// Save cursor periodically if interval is configured
+	if s.cursorCheckpointInterval > 0 && data.Clock.Number%s.cursorCheckpointInterval == 0 {
+		// Use background context since we don't want to block block processing
+		saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := s.loader.WriteCursor(saveCtx, s.OutputModuleHash(), cursor)
+		cancel()
+		if err != nil {
+			s.logger.Warn("failed to save cursor periodically",
+				zap.Uint64("block_num", data.Clock.Number),
+				zap.Error(err))
+		} else {
+			s.logger.Debug("cursor saved periodically",
+				zap.Uint64("block_num", data.Clock.Number))
+		}
+	}
 
 	return nil
 }
