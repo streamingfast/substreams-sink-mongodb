@@ -54,8 +54,8 @@ func New(sink *sink.Sinker, loader *mongo.Loader, tables mongo.Tables, logger *z
 	return s, nil
 }
 
-func (s *MongoSinker) writeLastCursor(ctx context.Context, err error) {
-	if s.lastCursor == nil || err != nil {
+func (s *MongoSinker) writeLastCursor(ctx context.Context, _ error) {
+	if s.lastCursor == nil {
 		return
 	}
 
